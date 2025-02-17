@@ -18,7 +18,7 @@ API_ENDPOINTS = {
     "/v1/comms/mobile-bills": "POST",
     "/v1/comms/mobile-payments": "POST"
 }
-# asd
+# asdasdfasdfdsaf
 # 엔드포인트별 Header 설정
 ENDPOINT_HEADERS = {
     "/v1/user/verify": {
