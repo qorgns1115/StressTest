@@ -2,23 +2,11 @@ import subprocess
 import json
 import time
 import pandas as pd
+import schedule
 import os
 from datetime import datetime
 import requests
 from typing import Dict, Tuple, Optional
-import numpy as np
-from json import JSONEncoder
-
-class NumpyEncoder(JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super(NumpyEncoder, self).default(obj)
-
 
 # API 엔드포인트 및 HTTP 메서드 설정
 API_ENDPOINTS = {
@@ -30,7 +18,7 @@ API_ENDPOINTS = {
     "/v1/comms/mobile-bills": "POST",
     "/v1/comms/mobile-payments": "POST"
 }
-
+# asdasdfasdfdsaf
 # 엔드포인트별 Header 설정
 ENDPOINT_HEADERS = {
     "/v1/user/verify": {
@@ -71,20 +59,23 @@ def run_jmeter_test(jmx_file, results_dir):
     :param results_dir: 결과 저장 디렉토리
     :return: (성공 여부, 결과 파일 경로)
     """
-    result_file = os.path.join(results_dir, "test_results.jtl")
+    result_file = os.path.join(results_dir, "test_results.jtl") #결과 저장 디렉토리랑 jtl 파일 연결
     log_file = os.path.join(results_dir, "jmeter.log")
     
     print(f"🚀 JMeter 테스트 실행 중...")
     print(f"📁 결과 디렉토리: {results_dir}")
     
-    cmd = f'"{JMETER_PATH}" -n -t "{jmx_file}" -l "{result_file}" -j "{log_file}"'
+    cmd = f'"{JMETER_PATH}" -n -t "{jmx_file}" -l "{result_file}" -j "{log_file}"' #jmeter 실행 파일 경로, gui 없이, test plan, log file 경로, jmeter log file 경로 지정
     
     try:
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # JMeter 실행 및 실시간 출력 캡처
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True) #실행된 프로세스가 끝날 때까지 기다리지 않는 비동기 실행 방식
+        #표준출력을 파이프로 연결 > 프로세스의 출력을 파이썬 코드에서 읽을 수 있음, 표준에러를 표준출력으로 리다이렉트함으로써 일반 출력과 에러 메시지가 모두 같은 파이프로 전달돼서 에러와 일반 출력을 함께 처리
+        #입출력을 문자열로 처리하도록 지정
         
         while True:
             output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
+            if output == '' and process.poll() is not None: #output이 공백이거나, poll이 not none(실행된 프로세스 종료)동시에 되면 루프 빠져나감
                 break
             if output:
                 print(output.strip())
@@ -101,35 +92,37 @@ def run_jmeter_test(jmx_file, results_dir):
     except Exception as e:
         print(f"❌ 오류 발생: {str(e)}")
         return False, None
+
+def get_user_input():
+    """기본 서버 설정 정보 입력 받기"""
+    print("📌 JMeter 자동화 테스트를 위한 기본 정보를 입력하세요.")
+    protocol = input("Protocol (http/https): ").strip()
+    server_name = input("Server Name or IP: ").strip()
+    port = input("Port Number (예: 8080): ").strip()
     
-def load_config(config_file='stresstest_config.json'):
-    """설정 파일에서 테스트 구성 로드"""
-    try:
-        with open(config_file, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        print(f"❌ 설정 파일을 찾을 수 없습니다: {config_file}")
-        exit(1)
-    except json.JSONDecodeError:
-        print(f"❌ 설정 파일 형식이 잘못되었습니다: {config_file}")
-        exit(1)
+    return {
+        "protocol": protocol,
+        "server_name": server_name,
+        "port": port
+    }
 
 class StressTestController:
-    def __init__(self, config):
+    def __init__(self, initial_threads=610, thread_increment=5, max_threads=1000,
+                 error_threshold=5, response_time_threshold=5000):
         """
         스트레스 테스트 컨트롤러 초기화
+        :param initial_threads: 초기 쓰레드 수 (기본값: 10)
+        :param thread_increment: 단계별 쓰레드 증가량 (기본값: 10)
+        :param max_threads: 최대 쓰레드 수 (기본값: 1000)
+        :param error_threshold: 오류율 임계값(%) (기본값: 5%)
+        :param response_time_threshold: 응답시간 임계값(ms) (기본값: 5000ms)
         """
-        self.initial_threads = config['test_parameters']['initial_threads']
-        self.thread_increment = config['test_parameters']['thread_increment']
-        self.max_threads = config['test_parameters']['max_threads']
-        self.error_threshold = config['test_parameters']['error_threshold']
-        self.response_time_threshold = config['test_parameters']['response_time_threshold']
-        self.initial_duration = config['test_parameters']['initial_duration']
-        self.duration_increment = config['test_parameters']['duration_increment']
-        self.max_duration = config['test_parameters']['max_duration']
-        
-        self.current_threads = self.initial_threads
-        self.current_duration = self.initial_duration
+        self.initial_threads = initial_threads
+        self.thread_increment = thread_increment
+        self.max_threads = max_threads
+        self.error_threshold = error_threshold  # 허용 가능한 최대 오류율
+        self.response_time_threshold = response_time_threshold  # 허용 가능한 최대 응답 시간
+        self.current_threads = initial_threads
         self.test_phase = "running"
         self.failure_detected = False
         self.failure_reason = None
@@ -137,6 +130,8 @@ class StressTestController:
     def should_continue(self, stats: Dict) -> Tuple[bool, Optional[str]]:
         """
         테스트 지속 여부 결정
+        :param stats: 현재 테스트 통계
+        :return: (계속 진행 여부, 중단 사유)
         """
         if stats["error_rate"] > self.error_threshold:
             return False, f"오류율이 임계값을 초과함: {stats['error_rate']}%"
@@ -144,28 +139,26 @@ class StressTestController:
         if stats["avg_response_time"] > self.response_time_threshold:
             return False, f"응답 시간이 임계값을 초과함: {stats['avg_response_time']}ms"
             
-        if self.current_threads >= self.max_threads and self.current_duration >= self.max_duration:
-            return False, f"최대 쓰레드 수({self.max_threads})와 최대 지속시간({self.max_duration}초)에 도달함"
+        if self.current_threads >= self.max_threads:
+            return False, f"최대 쓰레드 수에 도달함: {self.max_threads}"
             
         return True, None
 
-    def increment_test_parameters(self):
-        """다음 테스트를 위한 파라미터 조정"""
-        if self.current_duration < self.max_duration:
-            self.current_duration += self.duration_increment
-            return "duration_increased"
-        else:
-            self.current_duration = self.initial_duration
-            self.current_threads += self.thread_increment
-            return "threads_increased"
+    def increment_threads(self) -> int:
+        """다음 테스트 단계를 위한 쓰레드 수 증가"""
+        self.current_threads += self.thread_increment
+        return self.current_threads
 
-def create_jmx_file(config, results_dir, thread_count, duration, filename="generated_test.jmx"):
-    """JMeter 테스트 설정 파일 생성"""
+def create_jmx_file(config, results_dir, thread_count, filename="generated_test.jmx"):
+    """
+    JMeter 테스트 설정 파일 생성
+    :param config: 서버 설정 정보
+    :param results_dir: 결과 저장 디렉토리
+    :param thread_count: 현재 쓰레드 수
+    :param filename: 생성할 파일명
+    """
     full_path = os.path.join(results_dir, filename)
     
-    # (이전 JMX 템플릿 코드는 동일하게 유지하되, duration 값만 변경)
-    # ThreadGroup 설정에서 duration 값을 변경:
-    # <stringProp name="ThreadGroup.duration">{duration}</stringProp>
     jmx_template = f'''<?xml version="1.0" encoding="UTF-8"?>
 <jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
   <hashTree>
@@ -196,7 +189,7 @@ def create_jmx_file(config, results_dir, thread_count, duration, filename="gener
         <stringProp name="ThreadGroup.num_threads">{thread_count}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">1</stringProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
-        <stringProp name="ThreadGroup.duration">{duration}</stringProp>
+        <stringProp name="ThreadGroup.duration">30</stringProp>
         <stringProp name="ThreadGroup.delay"></stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
       </ThreadGroup>
@@ -297,126 +290,76 @@ def create_jmx_file(config, results_dir, thread_count, duration, filename="gener
     
     with open(full_path, 'w', encoding='utf-8') as f:
         f.write(jmx_template)
-
     return full_path
-    
 
 def analyze_results(jtl_file: str, results_dir: str) -> Dict:
     """
-    테스트 결과 분석 및 저장
-    :param jtl_file: JMeter 결과 파일 (.jtl)
+    테스트 결과 분석
+    :param jtl_file: JMeter 결과 파일
     :param results_dir: 결과 저장 디렉토리
     :return: 분석된 통계 정보
     """
-    print(f"📊 테스트 결과 분석 중... ({jtl_file})")
-    
-    # JTL 파일 읽기
     df = pd.read_csv(jtl_file)
     
-    # 기본 통계 계산
+    # 데이터 타입 변환을 위한 함수
+    def convert_to_serializable(value):
+        if pd.api.types.is_integer_dtype(type(value)):
+            return int(value)
+        elif pd.api.types.is_float_dtype(type(value)):
+            return float(value)
+        return value
+    
     stats = {
-        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "total_requests": len(df),
-        "error_count": (df['success'] == False).sum(),
+        "total_requests": int(len(df)),
         "error_rate": float((df['success'] == False).mean() * 100),
-        
-        # 응답 시간 통계 (밀리초)
-        "response_time": {
-            "min": float(df['elapsed'].min()),
-            "max": float(df['elapsed'].max()),
-            "mean": float(df['elapsed'].mean()),
-            "median": float(df['elapsed'].median()),
-            "90th_percentile": float(df['elapsed'].quantile(0.90)),
-            "95th_percentile": float(df['elapsed'].quantile(0.95)),
-            "99th_percentile": float(df['elapsed'].quantile(0.99))
-        },
-        
-        # 처리량 통계
-        "throughput": {
-            "requests_per_second": float(len(df) / (df['timeStamp'].max() - df['timeStamp'].min()) * 1000),
-            "total_bytes": int(df['bytes'].sum()),
-            "avg_bytes_per_request": float(df['bytes'].mean())
-        },
-        
-        # 에러 상세 정보
-        "errors": df[df['success'] == False]['responseMessage'].value_counts().to_dict(),
-        
-        # HTTP 응답 코드 분포
-        "response_codes": df['responseCode'].value_counts().to_dict()
+        "avg_response_time": float(df['elapsed'].mean()),
+        "max_response_time": float(df['elapsed'].max()),
+        "min_response_time": float(df['elapsed'].min()),
+        "90th_percentile": float(df['elapsed'].quantile(0.90)),
+        "95th_percentile": float(df['elapsed'].quantile(0.95)),
+        "requests_per_second": float(len(df) / (df['timeStamp'].max() - df['timeStamp'].min()) * 1000),
+        "error_count": int((df['success'] == False).sum())
     }
     
-    # 엔드포인트별 통계
-    endpoint_stats = {}
-    for endpoint in df['label'].unique():
-        endpoint_df = df[df['label'] == endpoint]
-        endpoint_stats[endpoint] = {
-            "total_requests": len(endpoint_df),
-            "error_rate": float((endpoint_df['success'] == False).mean() * 100),
-            "avg_response_time": float(endpoint_df['elapsed'].mean()),
-            "90th_percentile": float(endpoint_df['elapsed'].quantile(0.90)),
-            "error_count": int((endpoint_df['success'] == False).sum())
-        }
-    
-    stats["endpoint_statistics"] = endpoint_stats
-    
-    # JSON 파일로 저장
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    json_results_file = os.path.join(results_dir, f"test_results_{timestamp}.json")
-    
-    # 이렇게 사용:
-    with open(json_results_file, 'w', encoding='utf-8') as f:
-        json.dump(stats, f, indent=4, ensure_ascii=False, cls=NumpyEncoder)
-    
-    print(f"✅ 분석 결과 저장 완료: {json_results_file}")
-    
-    # 요약 로그 파일 생성
-    summary_file = os.path.join(results_dir, f"test_summary_{timestamp}.txt")
-    with open(summary_file, 'w', encoding='utf-8') as f:
-        f.write(f"스트레스 테스트 결과 요약\n")
-        f.write(f"테스트 시간: {stats['timestamp']}\n")
-        f.write(f"총 요청 수: {stats['total_requests']}\n")
-        f.write(f"오류율: {stats['error_rate']:.2f}%\n")
-        f.write(f"평균 응답 시간: {stats['response_time']['mean']:.2f}ms\n")
-        f.write(f"90th 백분위 응답 시간: {stats['response_time']['90th_percentile']:.2f}ms\n")
-        f.write(f"초당 요청 수: {stats['throughput']['requests_per_second']:.2f}\n")
+    # 모든 값을 기본 Python 타입으로 변환
+    serializable_stats = {k: convert_to_serializable(v) for k, v in stats.items()}
+
+    # 상세 통계 저장
+    with open(os.path.join(results_dir, f"phase_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"), 'w') as f:
+        json.dump(serializable_stats, f, indent=4)
         
-        f.write("\n엔드포인트별 통계:\n")
-        for endpoint, endpoint_stat in stats["endpoint_statistics"].items():
-            f.write(f"\n{endpoint}:\n")
-            f.write(f"  총 요청 수: {endpoint_stat['total_requests']}\n")
-            f.write(f"  오류율: {endpoint_stat['error_rate']:.2f}%\n")
-            f.write(f"  평균 응답 시간: {endpoint_stat['avg_response_time']:.2f}ms\n")
-    
-    print(f"📝 테스트 요약 저장 완료: {summary_file}")
-    
     return stats
 
 def run_stress_test(config: Dict):
     """
     스트레스 테스트 실행 메인 함수
+    :param config: 서버 설정 정보
     """
     base_results_dir = f"stress_test_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(base_results_dir, exist_ok=True)
     
     # 스트레스 테스트 컨트롤러 초기화
-    controller = StressTestController(config)
+    controller = StressTestController()
     
     # 테스트 설정 기록
     with open(os.path.join(base_results_dir, "test_config.json"), 'w') as f:
-        json.dump(config, f, indent=4)
+        json.dump({
+            "initial_threads": controller.initial_threads,
+            "thread_increment": controller.thread_increment,
+            "max_threads": controller.max_threads,
+            "error_threshold": controller.error_threshold,
+            "response_time_threshold": controller.response_time_threshold,
+            "server_config": config
+        }, f, indent=4)
     
     while True:
-        phase_dir = os.path.join(base_results_dir, 
-                               f"phase_threads_{controller.current_threads}_duration_{controller.current_duration}")
+        phase_dir = os.path.join(base_results_dir, f"phase_{controller.current_threads}_threads")
         os.makedirs(phase_dir, exist_ok=True)
         
-        print(f"\n🔄 테스트 단계 시작:")
-        print(f"   - 쓰레드 수: {controller.current_threads}")
-        print(f"   - 테스트 지속시간: {controller.current_duration}초")
+        print(f"\n🔄 {controller.current_threads}개의 쓰레드로 테스트 단계 시작")
         
         # JMeter 테스트 생성 및 실행
-        jmx_file = create_jmx_file(config['server_config'], phase_dir, 
-                                  controller.current_threads, controller.current_duration)
+        jmx_file = create_jmx_file(config, phase_dir, controller.current_threads)
         success, result_file = run_jmeter_test(jmx_file, phase_dir)
         
         if not success:
@@ -429,38 +372,37 @@ def run_stress_test(config: Dict):
         stats = analyze_results(result_file, phase_dir)
         
         # 단계별 결과 출력
-        print(f"\n📊 단계별 결과:")
-        print(f"쓰레드 수: {controller.current_threads}")
-        print(f"테스트 지속시간: {controller.current_duration}초")
-        print(f"초당 요청 수: {stats['throughput']['requests_per_second']:.2f}")
-        print(f"평균 응답 시간: {stats['response_time']['mean']:.2f}ms")
+        print(f"\n📊 단계별 결과 (쓰레드 수: {controller.current_threads})")
+        print(f"초당 요청 수: {stats['requests_per_second']:.2f}")
+        print(f"평균 응답 시간: {stats['avg_response_time']:.2f}ms")
         print(f"오류율: {stats['error_rate']:.2f}%")
-        print(f"90퍼센타일 응답 시간: {stats['response_time']['90th_percentile']:.2f}ms")
+        print(f"90퍼센타일 응답 시간: {stats['90th_percentile']:.2f}ms")
         
         # 계속 진행 여부 확인
-        adjusted_stats = {
-        "error_rate": stats["error_rate"],
-        "avg_response_time": stats["response_time"]["mean"]
-        }
-        should_continue, reason = controller.should_continue(adjusted_stats)
-        
+        should_continue, reason = controller.should_continue(stats)
         if not should_continue:
             print(f"\n🛑 스트레스 테스트 중단: {reason}")
             controller.failure_detected = True
             controller.failure_reason = reason
             break
             
-        # 다음 단계를 위한 파라미터 조정
-        result = controller.increment_test_parameters()
-        if result == "duration_increased":
-            print(f"\n⏱️ 지속시간 증가: {controller.current_duration}초")
-        else:
-            print(f"\n🔄 쓰레드 수 증가: {controller.current_threads}")
+        # 다음 단계를 위한 쓰레드 수 증가
+        controller.increment_threads()
         
         # 단계 간 일시 중지
         time.sleep(5)
+    
 
 if __name__ == "__main__":
     print("🚀 JMeter 스트레스 테스트 시작")
-    config = load_config()  # JSON 파일에서 설정 로드
+    config = get_user_input()
     run_stress_test(config)
+
+#사용자 입력(프로토콜, 서버 주소, 포트 번호) > jmeter 테스트 설정 파일(jmx) 생성(api 엔드포인트와 요청 방식 설정, 쓰레드 수와 요청 body, header 설정, 요청을 반복할 지 여부 설정) > jmeter 테스트 실행해서 실시간 로그 출력(jmeter가 api 부하 테스트 수행 후 응답 데이터 기록) > 테스트 결과를 jtl 파일에 저장
+# > 테스트 결과 분석(평균 응답 시간, 최대 응답 시간, 오류율, 초당 요청 수)후 json 파일로 저장, 이로 인해 api 성능 데이터 확보 > stresstestcontroller로 thread 수 증가시키면서 성능 테스트 함 > stress test 실행 및 반복, 이를 통해 api의 최대 처리 성능과 한계점 파악 > 보고서 생성
+
+
+#get user input으로 사용자 입력 받고, jmeter 테스트 파일 jmx 파일 api 엔드포인트랑, http 요청방식, 헤더, 바디 이런거 설정해서 만들고 jmetertest 실행해서 jtl 파일 만들어서 로그 저장하고 stresstestcontroller 객체 생성해서 runstresstest해서 점진적으로 쓰레드수 늘려가면서 성능테스트 반복하고 jtl 파일 읽어서 api 응답시간, 오류율, 요청 수 등의 통계 분석, 
+# 이후 should_continue() 함수로 임계값 초과 여부 판단해서 특정 조건 발생 시 중단
+# 최대 쓰레드 620
+ 

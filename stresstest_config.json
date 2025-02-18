@@ -1,0 +1,17 @@
+{
+    "server_config": {
+        "protocol": "http",
+        "server_name": "localhost",
+        "port": "8080"
+    },
+    "test_parameters": {
+        "initial_threads": 620,
+        "thread_increment": 10,
+        "max_threads": 1000,
+        "error_threshold": 5,
+        "response_time_threshold": 5000,
+        "initial_duration": 600,
+        "duration_increment": 300,
+        "max_duration": 1800
+    }
+}
