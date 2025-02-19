@@ -138,26 +138,46 @@ class StressTestController:
         """
         테스트 지속 여부 결정
         """
-        if stats["error_rate"] > self.error_threshold:
-            return False, f"오류율이 임계값을 초과함: {stats['error_rate']}%"
-        
-        if stats["avg_response_time"] > self.response_time_threshold:
-            return False, f"응답 시간이 임계값을 초과함: {stats['avg_response_time']}ms"
+        # max thread에서 임계값 초과하면 테스트 종료
+        if self.current_threads >= self.max_threads:
+            if stats["error_rate"] > self.error_threshold:
+                return False, f"최대 쓰레드 수({self.max_threads})에서 오류율({stats['error_rate']}%)이 임계값({self.error_threshold}%)을 초과함"
+            if stats["avg_response_time"] > self.response_time_threshold:
+                return False, f"최대 쓰레드 수({self.max_threads})에서 응답시간({stats['avg_response_time']}ms)이 임계값({self.response_time_threshold}ms)을 초과함"
             
+        # max thread & max duration 도달 시 종료
         if self.current_threads >= self.max_threads and self.current_duration >= self.max_duration:
             return False, f"최대 쓰레드 수({self.max_threads})와 최대 지속시간({self.max_duration}초)에 도달함"
             
+        # 그 외의 경우 임계값 초과 시 thread 증가를 위한 시그널 반환
+        if stats["error_rate"] > self.error_threshold:
+            print(f"⚠️ 오류율({stats['error_rate']}%)이 임계값({self.error_threshold}%)을 초과함")
+            return True, "threshold_exceeded"
+        
+        if stats["avg_response_time"] > self.response_time_threshold:
+            print(f"⚠️ 응답시간({stats['avg_response_time']}ms)이 임계값({self.response_time_threshold}ms)을 초과함")
+            return True, "threshold_exceeded"
+            
         return True, None
 
-    def increment_test_parameters(self):
+    def increment_test_parameters(self, threshold_exceeded=False):
         """다음 테스트를 위한 파라미터 조정"""
+        if threshold_exceeded:
+            # 임계값 초과 시 duration 초기화하고 thread 증가
+            self.current_duration = self.initial_duration
+            if self.current_threads < self.max_threads:
+                self.current_threads += self.thread_increment
+            return "threads_increased"
+        
+        # 정상적인 경우 duration 증가
         if self.current_duration < self.max_duration:
             self.current_duration += self.duration_increment
-            return "duration_increased"
         else:
             self.current_duration = self.initial_duration
-            self.current_threads += self.thread_increment
+            if self.current_threads < self.max_threads:
+                self.current_threads += self.thread_increment
             return "threads_increased"
+
 
 def create_jmx_file(config, results_dir, thread_count, duration, filename="generated_test.jmx"):
     """JMeter 테스트 설정 파일 생성"""
@@ -438,24 +458,28 @@ def run_stress_test(config: Dict):
         print(f"90퍼센타일 응답 시간: {stats['response_time']['90th_percentile']:.2f}ms")
         
         # 계속 진행 여부 확인
+        # 계속 진행 여부 확인
         adjusted_stats = {
-        "error_rate": stats["error_rate"],
-        "avg_response_time": stats["response_time"]["mean"]
+            "error_rate": stats["error_rate"],
+            "avg_response_time": stats["response_time"]["mean"]
         }
         should_continue, reason = controller.should_continue(adjusted_stats)
         
         if not should_continue:
-            print(f"\n🛑 스트레스 테스트 중단: {reason}")
+            print(f"\n🛑 스트레스 테스트 완료: {reason}")
             controller.failure_detected = True
             controller.failure_reason = reason
             break
             
         # 다음 단계를 위한 파라미터 조정
-        result = controller.increment_test_parameters()
-        if result == "duration_increased":
-            print(f"\n⏱️ 지속시간 증가: {controller.current_duration}초")
-        else:
+        threshold_exceeded = (reason == "threshold_exceeded")
+        result = controller.increment_test_parameters(threshold_exceeded)
+        
+        if result == "threads_increased":
             print(f"\n🔄 쓰레드 수 증가: {controller.current_threads}")
+            print(f"   지속시간 초기화: {controller.current_duration}초")
+        else:
+            print(f"\n⏱️ 지속시간 증가: {controller.current_duration}초")
         
         # 단계 간 일시 중지
         time.sleep(5)
