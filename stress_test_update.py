@@ -469,6 +469,8 @@ def run_stress_test(config: Dict):
             print(f"\n🛑 스트레스 테스트 완료: {reason}")
             controller.failure_detected = True
             controller.failure_reason = reason
+            print("📊 대시보드를 실행합니다...")
+            os.system("streamlit run dashboard.py")
             break
             
         # 다음 단계를 위한 파라미터 조정
