@@ -68,14 +68,27 @@ def create_endpoint_metrics(data):
     return pd.DataFrame(endpoint_data)
 
 def create_performance_dashboard(data):
+    
+    divided1, divided2 = st.columns([4, 1])
+    with divided1: 
+        # Summary Statistics
+        st.header("🔍 Test Configuration Range")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Thread Range", f"{data['thread_count'].min()} - {data['thread_count'].max()}")
+        with col2:
+            st.metric("Duration Range", f"{data['duration'].min()} - {data['duration'].max()} seconds")
 
-    # Summary Statistics
-    st.header("🔍 Test Configuration Range")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Thread Range", f"{data['thread_count'].min()} - {data['thread_count'].max()}")
-    with col2:
-        st.metric("Duration Range", f"{data['duration'].min()} - {data['duration'].max()} seconds")
+    with divided2:
+        st.markdown("### Export Data")
+        csv_filename = f"test_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+        st.download_button(
+            label="📥 Download CSV",
+            data=data.to_csv(index=False).encode('utf-8'),
+            file_name=csv_filename,
+            mime="text/csv"
+        )
 
     # metrics dataframe
     metrics_df = data.groupby(['thread_count', 'duration']).agg({
@@ -136,8 +149,8 @@ def main():
     labels=['Good', 'Warning', 'Critical'])
 
     # 추가 분석 섹션
-    st.subheader("부하 테스트 상세 분석")
-    tabs = st.tabs(["처리량 분석", "에러율 분석"])
+    st.subheader("Load Test Detailed Analysis")
+    tabs = st.tabs(["Throughput Analysis", "Error Rate Analysis"])
 
     with tabs[0]:
         # 처리량 분석
@@ -148,7 +161,7 @@ def main():
             size='duration',
             color='duration',
             hover_data=['duration'],
-            title='Thread별 처리량과 Duration (초당 요청 수)',
+            title='Throughput and Duration by Thread (Requests per Second)',
             color_continuous_scale=px.colors.sequential.Viridis
         )
 
@@ -167,7 +180,7 @@ def main():
             color='error_rate',
             text='error_rate',
             barmode='group',
-            title='Thread와 Duration별 에러율',
+            title='Error Rate by Thread and Duration',
             color_continuous_scale='Reds',
         )
 
