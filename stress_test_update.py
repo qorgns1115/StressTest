@@ -8,6 +8,16 @@ import requests
 from typing import Dict, Tuple, Optional
 import numpy as np
 from json import JSONEncoder
+# for OCR
+from api_file_script import parse_api_spec_from_pdf
+# for GPT
+from api_gpt_script import TextAnalyzer
+from dotenv import load_dotenv
+
+
+load_dotenv()
+with open("test_value_config.json", "r", encoding="utf-8") as f:
+    value_config = json.load(f)
 
 class NumpyEncoder(JSONEncoder):
     def default(self, obj):
@@ -19,29 +29,59 @@ class NumpyEncoder(JSONEncoder):
             return obj.tolist()
         return super(NumpyEncoder, self).default(obj)
 
+api_detail = parse_api_spec_from_pdf()
 
+# for GPT
+analyzer = TextAnalyzer(os.environ.get("API_KEY"))
+info_prompt = """
+    나는 이 텍스트에서 아래와 같은 정보들을 가져오길 원해
+    API Endpoint 별로 요청 명세와 응답 명세에 있는 http_method, header key, body key를 가져오고 싶어.
+
+    그래서 아래와 같은 dataframe 형태면 좋겠어.
+    ?가 들어간 부분은 내가 채워넣고 싶은 곳이야.
+    해당 endpoint 부분은 endpoint url이 들어갔으면 좋겠어.
+    아 그리고 header에 'Content-Type'도 찾아서 넣어줘.
+    Content-Type은 'applicaion/json'이나 'multipart/formdata' 이런 형식이야
+    'application/json; charset=UTF-8'일 경우 '; charset=UTF-8'는 제거해줘
+    
+    아래 형식의 유효한 JSON을 반환해줘. 다른 설명은 전혀 필요없고 오직 JSON 형식의 데이터만 반환해줘:
+    {
+        "해당 endpoint" :{
+            "http_method" : ?,
+            "request" : {
+                "header" : [?],
+                "body" : [?],
+                "Content-Type" : ?
+            },
+            "response" : {
+                "header: [?],
+                "body" : [?],
+                "Content-Type" : ?
+            },
+        },
+        "해당 endpoint" :{
+            "http_method" : ?,
+            "request" : {
+                "header" : [?],
+                "body" : [?],                
+                "Content-Type" : ?
+            },
+            "response" : {
+                "header: [?],
+                "body" : [?],
+                "Content-Type" : ?
+            }
+        }
+    }
+    예시처럼 각 필드를 적절히 채워서 반환해줘. 빈 배열이나 null 값도 허용됨.
+
+    """
+
+api_spec_dict = json.loads(analyzer.analyze_with_gpt(api_detail, info_prompt))
 # API 엔드포인트 및 HTTP 메서드 설정
-API_ENDPOINTS = {
-    "/v1/user/verify": "POST",
-    "/v1/system/health": "GET",
-    "/v1/comms/member": "POST",
-    "/v1/comms/mobile-join": "POST",
-    "/v1/comms/mobile-usage": "POST",
-    "/v1/comms/mobile-bills": "POST",
-    "/v1/comms/mobile-payments": "POST"
-}
-
+API_ENDPOINTS = {}
 # 엔드포인트별 Header 설정
 ENDPOINT_HEADERS = {
-    "/v1/user/verify": {
-        "X-Api-Tx-Id": "12345",
-        "X-Src-Inst-Cd": "SRC001",
-        "X-Dst-Inst-Cd": "DST001",
-        "Content-Type": "application/json"
-    },
-    "/v1/system/health": {
-        "X-Api-Tx-Id": "12345"
-    },
     "default": {
         "X-Api-Tx-Id": "12345",
         "X-Src-Inst-Cd": "SRC001",
@@ -52,17 +92,28 @@ ENDPOINT_HEADERS = {
 }
 
 # Request Bodies 설정
-REQUEST_BODIES = {
-    "/v1/user/verify": '{"user_id": "test_user"}',
-    "/v1/comms/member": '{"user_id": "test_user", "search_timestamp": "2025-02-10", "next_page": "2000","limit": 1}',
-    "/v1/comms/mobile-join": '{"user_id": "test_id", "search_timestamp": "2025-02-10", "ctrt_mng_no": "100001"}',
-    "/v1/comms/mobile-usage": '{"user_id": "test_user", "search_timestamp": "2025-02-10", "ctrt_mng_no": "20", "bgng_ym": "2024-12", "end_ym": "2025-01"}',
-    "/v1/comms/mobile-bills": '{"user_id": "test_user", "search_timestamp": "2025-02-10", "ctrt_mng_no": "20", "bgng_ym": "2024-12", "end_ym": "2025-01"}',
-    "/v1/comms/mobile-payments": '{"user_id": "test_user", "search_timestamp": "2025-02-10", "ctrt_mng_no": "20", "bgng_ym": "2024-12", "end_ym": "2025-01"}'
-}
+REQUEST_BODIES = {}
 
+for endpoint, spec in api_spec_dict.items():
+    if endpoint in api_spec_dict:
+        API_ENDPOINTS[endpoint] = spec["http_method"]
+        ENDPOINT_HEADERS[endpoint] = {
+            header: value_config['header'].get(header, "") for header in spec['request']['header']
+        }
+        # Content-Type 추가
+        if "Content-Type" in spec["request"] and spec["http_method"] != "GET":
+            ENDPOINT_HEADERS[endpoint]["Content-Type"] = spec["request"]["Content-Type"]
+        
+        if len(spec['request']['body']) != 0:
+            body_dict = {body: value_config['body'].get(body, "") for body in spec['request']['body']}
+            REQUEST_BODIES[endpoint] = json.dumps(body_dict)
+
+# api_spec_json = json.dumps(api_spec_dict)
 # JMeter 실행 경로
 JMETER_PATH = r"C:\Users\Administrator\Downloads\apache-jmeter-5.6.3\apache-jmeter-5.6.3\bin\jmeter.bat"
+
+# REQUEST_BODIES_JSON = json.dumps(REQUEST_BODIES)
+
 
 def run_jmeter_test(jmx_file, results_dir):
     """

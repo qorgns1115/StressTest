@@ -1,0 +1,13 @@
+{
+    "header" : {
+        "X-Api-Tx-Id": "12345",
+        "X-Src-Inst-Cd": "SRC001",
+        "X-Dst-Inst-Cd": "DST001",
+        "X-Api-Type": "application/json"
+    },
+    "body" : {
+        "user_id" : "test_user",
+        "search_timestamp" : "12345",
+        "ctrt_mng_no": "50"
+    }
+}
