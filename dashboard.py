@@ -126,6 +126,7 @@ def create_performance_dashboard(data):
 
 def main():
     # 파일 선택
+    # result_dirs = 'stress_test_results_20250219_134529'
     result_dirs = [d for d in os.listdir('.') if d.startswith('stress_test_results')]
     if not result_dirs:
         st.error("No test result files found!")
@@ -141,7 +142,7 @@ def main():
         
     best_response = create_performance_dashboard(data)
 
-    filtered_data = data[data['duration'] > 0]
+    filtered_data = data[data['duration'] > 0].sort_values(by='thread_count')
 
     filtered_data['performance_status'] = pd.cut(
     filtered_data['error_rate'], 
@@ -152,18 +153,23 @@ def main():
     st.subheader("Load Test Detailed Analysis")
     tabs = st.tabs(["Throughput Analysis", "Error Rate Analysis"])
 
+    threshold = 10
+    threshold_filtered_data = data[data['error_rate'] <= threshold]
+    threshold_filtered_data['thread_count'] = threshold_filtered_data['thread_count'].astype(str)
+
     with tabs[0]:
         # 처리량 분석
-        fig_throughput = px.scatter(
+        fig_throughput = px.line(
             filtered_data,
             x='thread_count',
             y='requests_per_second',
-            size='duration',
             color='duration',
             hover_data=['duration'],
             title='Throughput and Duration by Thread (Requests per Second)',
-            color_continuous_scale=px.colors.sequential.Viridis
+            markers=True,
         )
+
+        fig_throughput.update_xaxes(type='category')
 
         fig_throughput.update_layout(
             xaxis_title='Thread Count',
@@ -171,52 +177,69 @@ def main():
         )
         st.plotly_chart(fig_throughput, use_container_width=True)
 
-    with tabs[1]:
+    with tabs[1]:        
         # 에러율 분석
         fig_errors = px.bar(
-            filtered_data,
+            threshold_filtered_data,
             x='thread_count',
-            y='duration',
-            color='error_rate',
+            y='error_rate',
+            color='duration',
             text='error_rate',
             barmode='group',
             title='Error Rate by Thread and Duration',
-            color_continuous_scale='Reds',
+            category_orders={"thread_count": sorted(threshold_filtered_data['thread_count'].astype(int).unique())}
         )
+
+        fig_errors.update_xaxes(type='category')
 
         fig_errors.update_traces(
             texttemplate='%{text:.2f}%',
-            textposition='outside'
+            textposition='outside',
+            width=0.2 
         )
 
         fig_errors.update_layout(
-            xaxis_title='Thread Count',
-            yaxis_title='Duration(seconds)',
-            coloraxis_colorbar=dict(title="에러율(%)"),
-            height=600   
+            height=600,
+            bargap=0.2,
+            bargroupgap=0.1,
+            xaxis=dict(
+                title="Thread Count",
+                tickmode="linear"
+            ),
+            yaxis=dict(
+                range=[0, 100],
+                title="Error Rate(%)"),
+            legend_title="Duration(seconds)"
         )
 
-        fig_errors.add_hline(y=5, line_dash='dot', line_color='red', annotation_text="5% Threshold" )
+        fig_errors.add_hline(y=threshold, line_dash='dot', line_color='red', annotation_text=f"{threshold}% Threshold" )
         st.plotly_chart(fig_errors, use_container_width=True)
 
-    # 엔드포인트별 성능
+    # Endpoint Performance
     st.subheader("Endpoint Performance")
     endpoint_df = create_endpoint_metrics(filtered_data)
     best_thread = best_response['thread_count']
 
     best_thread_endpoints = endpoint_df[endpoint_df['thread_count'] == best_thread] # proper data
-    
-    fig_endpoint = px.scatter(
+    best_thread_endpoints = best_thread_endpoints.sort_values(by='duration')
+    best_thread_endpoints['error_rate'] = best_thread_endpoints['error_rate'].replace(0, 0.1)
+
+    fig_endpoint = px.bar(
         best_thread_endpoints,
         x='duration',
         y='error_rate',
         color='endpoint',
-        title=f"Error Rate by Endpoint and Duration (Best Response Time Threads: {best_thread_endpoints['thread_count'].values[0]})"
+        barmode='group',
+        title=f"Error Rate by Endpoint and Duration (Best Response Time Threads: {best_thread_endpoints['thread_count'].values[0]})",
     )
+
+    fig_endpoint.update_xaxes(type='category')
     
     fig_endpoint.update_layout(
         xaxis_title='Duration (seconds)',
-        yaxis_title='Error Rate(%)'
+        yaxis_title='Error Rate(%)',
+        xaxis=dict(tickmode='linear'),
+        yaxis=dict(range=[0, 100])
     )
 
     st.plotly_chart(fig_endpoint, use_container_width=True)
